@@ -1,0 +1,8 @@
+{
+  "name": "fieldpulse-moxo-bridge-v2",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.8"
+  }
+}

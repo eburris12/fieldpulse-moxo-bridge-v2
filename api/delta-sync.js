@@ -2,74 +2,86 @@ import { supabase } from "../lib/supabase.js";
 
 export default async function handler(req, res) {
   try {
-
-    // =========================================
-    // 1. GET LAST SYNC TIME
-    // =========================================
-    const { data: state } = await supabase
+    // =====================================================
+    // 1. GET LAST SYNC (WATERMARK)
+    // =====================================================
+    const { data: state, error: stateError } = await supabase
       .from("sync_state")
       .select("*")
       .order("id", { ascending: false })
       .limit(1)
       .single();
 
-    const lastSync = state?.last_sync || "1970-02-01T00:00:00Z";
+    if (stateError) {
+      return res.status(500).json({ error: stateError.message });
+    }
 
-    // =========================================
-    // 2. SIMULATED EXTERNAL API (DELTA ONLY)
-    // Replace later with FieldPulse API filter
-    // =========================================
+    const lastSync = state?.last_sync
+      ? new Date(state.last_sync)
+      : new Date("1970-01-01T00:00:00Z");
+
+    // =====================================================
+    // 2. MOCK EXTERNAL SYSTEM (FieldPulse replacement)
+    // =====================================================
     const externalJobs = [
       {
         id: "FP-1001",
         status: "On the Way",
         technician_name: "John Smith",
         updated_at: "2026-05-11T00:00:00Z"
-      },
-      {
-        id: "FP-1002",
-        status: "Completed",
-        technician_name: "Mike Johnson",
-        updated_at: "2026-05-11T00:00:00Z"
       }
     ];
 
     const results = [];
 
-    // =========================================
-    // 3. ONLY PROCESS CHANGED RECORDS
-    // =========================================
-    for (const job of externalJobs) {
+    // =====================================================
+    // 3. PROCESS EACH EXTERNAL JOB
+    // =====================================================
+    for (const ext of externalJobs) {
 
-      const jobTime = new Date(job.updated_at);
-      const syncTime = new Date(lastSync);
+      const jobId = String(ext.id).trim();
+      const extTime = new Date(ext.updated_at);
 
-      // SKIP UNCHANGED
-      if (jobTime <= syncTime) {
+      // DEBUG LOGGING (CRITICAL FOR TESTING)
+      console.log("---- DELTA SYNC DEBUG ----");
+      console.log("JOB:", jobId);
+      console.log("LAST SYNC:", lastSync.toISOString());
+      console.log("EXTERNAL:", ext.updated_at);
+      console.log("EXTERNAL PARSED:", extTime.toISOString());
+
+      // =========================================
+      // 3A. SKIP IF NOT NEWER THAN LAST SYNC
+      // =========================================
+      if (extTime <= lastSync) {
         results.push({
-          job: job.id,
+          job: jobId,
           action: "skipped_not_changed"
         });
         continue;
       }
 
-      const jobId = String(job.id).trim();
-
-      const { data: existing } = await supabase
+      // =========================================
+      // 3B. FETCH LOCAL JOB
+      // =========================================
+      const { data: local, error } = await supabase
         .from("jobs")
         .select("*")
         .eq("job_id", jobId)
         .maybeSingle();
 
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+
       // =========================================
-      // INSERT IF MISSING
+      // 3C. INSERT IF MISSING
       // =========================================
-      if (!existing) {
+      if (!local) {
         await supabase.from("jobs").insert({
           job_id: jobId,
-          status: job.status,
-          technician_name: job.technician_name,
-          updated_at: job.updated_at
+          status: ext.status,
+          technician_name: ext.technician_name,
+          updated_at: ext.updated_at
         });
 
         results.push({
@@ -81,52 +93,60 @@ export default async function handler(req, res) {
       }
 
       // =========================================
-      // UPDATE IF DIFFERENT
+      // 3D. COMPARE FIELDS
       // =========================================
       const changes = {};
 
-      if (existing.status !== job.status) {
-        changes.status = job.status;
+      if (local.status !== ext.status) {
+        changes.status = ext.status;
       }
 
-      if (existing.technician_name !== job.technician_name) {
-        changes.technician_name = job.technician_name;
+      if (local.technician_name !== ext.technician_name) {
+        changes.technician_name = ext.technician_name;
       }
 
-      if (Object.keys(changes).length > 0) {
-        await supabase
-          .from("jobs")
-          .update({
-            ...changes,
-            updated_at: job.updated_at
-          })
-          .eq("job_id", jobId);
-
-        results.push({
-          job: jobId,
-          action: "updated",
-          changes
-        });
-
-      } else {
+      // =========================================
+      // 3E. UPDATE ONLY IF DIFFERENT
+      // =========================================
+      if (Object.keys(changes).length === 0) {
         results.push({
           job: jobId,
           action: "no_change"
         });
+        continue;
       }
+
+      await supabase
+        .from("jobs")
+        .update({
+          ...changes,
+          updated_at: ext.updated_at
+        })
+        .eq("job_id", jobId);
+
+      results.push({
+        job: jobId,
+        action: "updated",
+        changes
+      });
     }
 
-    // =========================================
-    // 4. UPDATE SYNC WATERMARK
-    // =========================================
+    // =====================================================
+    // 4. ADVANCE SYNC WATERMARK
+    // =====================================================
     await supabase
       .from("sync_state")
-      .update({ last_sync: new Date().toISOString() })
+      .update({
+        last_sync: new Date().toISOString()
+      })
       .eq("id", state.id);
 
+    // =====================================================
+    // 5. RESPONSE
+    // =====================================================
     return res.json({
       success: true,
-      lastSync,
+      lastSync: state.last_sync,
       results
     });
 

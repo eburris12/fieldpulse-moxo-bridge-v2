@@ -24,7 +24,7 @@ export default async function handler(req, res) {
         id: "FP-1001",
         status: "On the Way",
         technician_name: "John Smith",
-        updated_at: "2026-05-09T20:10:00Z"
+        updated_at: "2026-06-09T20:10:00Z"
       },
       {
         id: "FP-1002",

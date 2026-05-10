@@ -21,7 +21,7 @@ export default async function handler(req, res) {
       : new Date("1970-01-01T00:00:00Z");
 
     // =====================================================
-    // 2. MOCK EXTERNAL SYSTEM (FieldPulse replacement)
+    // 2. MOCK EXTERNAL SYSTEM (replace later with API)
     // =====================================================
     const externalJobs = [
       {
@@ -34,6 +34,9 @@ export default async function handler(req, res) {
 
     const results = [];
 
+    // Track newest external timestamp (IMPORTANT FIX)
+    let maxExternalTime = null;
+
     // =====================================================
     // 3. PROCESS EACH EXTERNAL JOB
     // =====================================================
@@ -42,12 +45,15 @@ export default async function handler(req, res) {
       const jobId = String(ext.id).trim();
       const extTime = new Date(ext.updated_at);
 
-      // DEBUG LOGGING (CRITICAL FOR TESTING)
+      // Track max timestamp for watermark update
+      if (!maxExternalTime || extTime > maxExternalTime) {
+        maxExternalTime = extTime;
+      }
+
       console.log("---- DELTA SYNC DEBUG ----");
       console.log("JOB:", jobId);
       console.log("LAST SYNC:", lastSync.toISOString());
       console.log("EXTERNAL:", ext.updated_at);
-      console.log("EXTERNAL PARSED:", extTime.toISOString());
 
       // =========================================
       // 3A. SKIP IF NOT NEWER THAN LAST SYNC
@@ -132,14 +138,16 @@ export default async function handler(req, res) {
     }
 
     // =====================================================
-    // 4. ADVANCE SYNC WATERMARK
+    // 4. FIXED WATERMARK UPDATE (CRITICAL FIX)
     // =====================================================
-    await supabase
-      .from("sync_state")
-      .update({
-        last_sync: new Date().toISOString()
-      })
-      .eq("id", state.id);
+    if (maxExternalTime) {
+      await supabase
+        .from("sync_state")
+        .update({
+          last_sync: maxExternalTime.toISOString()
+        })
+        .eq("id", state.id);
+    }
 
     // =====================================================
     // 5. RESPONSE

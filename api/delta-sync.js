@@ -13,7 +13,7 @@ export default async function handler(req, res) {
       .limit(1)
       .single();
 
-    const lastSync = state?.last_sync || "1970-01-01T00:00:00Z";
+    const lastSync = state?.last_sync || "1970-02-01T00:00:00Z";
 
     // =========================================
     // 2. SIMULATED EXTERNAL API (DELTA ONLY)
